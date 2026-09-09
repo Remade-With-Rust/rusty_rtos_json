@@ -54,3 +54,4 @@ To be written with the first milestone.
 | Date | Decision |
 |---|---|
 | 2026-09-09 | Stamped from the Kairos template; obeys the family plan. |
+| 2026-09-09 | **Relation to the house `rusty_json_turbo`** (serde_json forked and made fast; lib name `serde_json`; `no_std + alloc`, checked on the Kairos bare-metal targets in the umbrella's `tools/house-gate`): this package is the coreJSON *API* — the zero-allocation validator and `JSON_Search` over a byte buffer, `forbid(unsafe)`, no `alloc` — which serde_json's model (an `alloc`-backed `Value` and boxed errors) cannot provide; typed (de)serialization under `alloc` goes through `rusty_json_turbo` behind a `serde` feature, never a second parser for that job. The umbrella's `docs/HOUSE-STACK.md` carries the pin and the gate. |
