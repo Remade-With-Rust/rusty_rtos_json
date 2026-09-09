@@ -1,0 +1,25 @@
+[package]
+name = "rusty_rtos_json"
+description = "coreJSON remade in Rust: the strict ECMA-404 validator and the query-by-path search, zero allocation, no_std, forbid(unsafe), with the no-panic gate every parser in the family carries."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
+rust-version.workspace = true
+readme = "../../README.md"
+documentation = "https://docs.rs/rusty_rtos_json"
+keywords = ["rtos", "freertos", "embedded", "no-std", "remade-with-rust"]
+categories = ["embedded", "no-std", "os"]
+
+[features]
+default = ["std"]
+std = ["rusty_rtos_json-core/std"]
+alloc = ["rusty_rtos_json-core/alloc"]
+
+[dependencies]
+rusty_rtos_json-core = { workspace = true }
+
+[lints]
+workspace = true
