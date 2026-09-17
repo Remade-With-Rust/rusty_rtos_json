@@ -25,3 +25,8 @@ pub mod prelude {
 
 /// Crate version, for manifests and logs.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
+
+/// `JSON_Validate`: coreJSON's strict ECMA-404 validator.
+pub mod validate;
+
+pub use validate::{MAX_DEPTH, Validity, is_valid, validate};

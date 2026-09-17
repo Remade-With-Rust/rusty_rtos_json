@@ -1,6 +1,6 @@
 [package]
 name = "rusty_rtos_json"
-description = "coreJSON remade in Rust: the strict ECMA-404 validator and the query-by-path search, zero allocation, no_std, forbid(unsafe), with the no-panic gate every parser in the family carries."
+description = "coreJSON remade in Rust: the strict ECMA-404 validator, agreeing with the C on all 318 JSONTestSuite files and passing the suite outright. Zero allocation, no_std, forbid(unsafe), with a no-panic gate. Query-by-path is not implemented yet."
 version.workspace = true
 edition.workspace = true
 license.workspace = true

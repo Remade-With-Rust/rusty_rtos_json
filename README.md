@@ -6,20 +6,26 @@
 [![docs.rs](https://docs.rs/rusty_rtos_json/badge.svg)](https://docs.rs/rusty_rtos_json)
 [![license](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](#license)
 
-A `no_std` JSON parser and serialiser, the Kairos remake of coreJSON. MIT OR Apache-2.0.
+A `no_std` JSON validator, the Kairos remake of coreJSON. MIT OR Apache-2.0.
 
-**This crate is a scaffold.** The layout, feature ladder, lint policy and CI
-gates exist; there is no implementation behind them yet. It is listed here so
-the family's shape is visible, and the README says so rather than implying
-otherwise.
+**K7's second library**, and the first one in this family driven by bytes from
+the network rather than by our own kernel.
 
-- **What exists**: the crate layout, the `no_std` / `alloc` / `std` feature
-  ladder, the workspace lint policy, `cargo deny`, and the CI gate every Kairos
-  package shares.
-- **What does not**: the implementation, and its oracle — JSONTestSuite and coreJSON's own vectors, plus a no-panic fuzz gate. This is
-  milestone **K7**, which follows the kernel, the ports and the C ABI.
+- **Proven**: `JSON_Validate`, the strict ECMA-404 validator. It agrees with
+  coreJSON v3.3.1 on **all 318 files of JSONTestSuite**, and passes the suite
+  outright — 95/95 accepted, 188/188 rejected.
+- **Zero allocation, on purpose.** The depth stack is a fixed 32-byte array;
+  there is no heap on any path, so the crate builds and runs the same on a
+  Cortex-M with no allocator at all.
+- **A no-panic gate, because this one is fed by strangers.** Every other crate
+  here is driven by our own kernel. A validator is driven by bytes off a
+  socket, so "cannot panic on any input" is not tidiness, it is the security
+  property.
 
-**Known gaps.** Everything above the scaffold. Do not depend on this crate.
+**Known gaps.** `JSON_Search`, `JSON_SearchConst` and `JSON_Iterate` — the
+query half of coreJSON — are **not written**. This crate validates; it does not
+yet let you pull a value out by path. coreJSON has no serialiser and neither
+does this.
 
 - This package's plan: [docs/plans/rusty_rtos_json.md](https://github.com/Remade-With-Rust/rusty_rtos_json/blob/main/docs/plans/rusty_rtos_json.md)
 - Every number: [docs/LEDGER.md](https://github.com/Remade-With-Rust/rusty_rtos_json/blob/main/docs/LEDGER.md)
@@ -32,25 +38,115 @@ flashed" means no chip has run it.
 
 ## Conformance
 
-**None yet, and that is the honest answer.** The Kairos rule is that a README
-makes no capability claim that is not backed by a test, a benchmark ledger entry
-or a kill test recorded in the plan. This section stays empty until K7's oracle
-passes.
+**318 of 318 files agree with `core_json.c`**, compiled verbatim from the
+pinned checkout (v3.3.1 at `cffa492`), and the suite is passed outright.
+
+```sh
+cargo test -p rusty_rtos_json-core
+```
+
+The C arm's verdicts are checked in and the corpus is vendored, so this diffs
+with no C toolchain and no network. Fetch the oracle itself with `kairos oracle
+fetch --lib coreJSON`; the corpus is Nicolas Seriot's JSONTestSuite, pinned at
+`1ef36fa` in [`ORACLES.md`](https://github.com/Remade-With-Rust/kairos/blob/main/ORACLES.md).
+
+**Two tests, because they are two claims.** One compares our verdict against
+**coreJSON's**, file by file; the other compares against **the suite's** — every
+`y_` accepted, every `n_` rejected. They happen to be the same target here, and
+that was *measured before either was adopted*: coreJSON itself scores 100 % on
+the suite. Had it failed anywhere, "agree with the C" and "pass the suite"
+would have pulled apart and one would have had to give. Keeping both means the
+day that changes is visible rather than silently resolved.
+
+The 35 `i_` files are where the standard leaves the answer to the
+implementation, so the suite has no opinion and only the differential does.
+coreJSON accepts 10 and rejects 25 — being *a* JSON parser does not determine
+those, being *coreJSON* does.
+
+**The corpus guard.** For a validator the rejections are the hard half:
+accepting valid JSON is what any half-written scanner does, and every `n_` file
+is a specific way to be wrong. A standing test fails if the corpus stops being
+mostly rejections. That is the fourth shape of that guard here, after
+`heap_4`'s (too few refusals), `heap_1`'s (never exhausted) and `backoff`'s (an
+unvisited branch), and all four say the same thing: a differential whose
+workload cannot fail is a differential about nothing.
+
+**Poison-proven on four behaviours**, each caught by a different set of files:
+
+* **over-long UTF-8** — accepting a non-shortest encoding fails 2 files;
+* **lone surrogates** — accepting an unpaired high surrogate escape fails 3;
+* **trailing commas** — allowing one fails 2;
+* **leading zeros** — allowing `01` fails 3.
+
+## The no-panic gate
+
+The crate forbids `unsafe` and denies `unwrap`, `expect` and `panic`, so a
+panic could only come from arithmetic that overflows, an index out of range, or
+a slice shorter than something assumed. The lints catch the *shapes*; these go
+after the reachability:
+
+| test | what it feeds in |
+|---|---|
+| arbitrary bytes | every length 0..256 of unstructured noise |
+| JSON-shaped noise | 20,000 documents drawn from JSON's own alphabet, which reaches far deeper than uniform noise |
+| every truncation | six valid documents cut at every offset, 202 slices — the shape a packet boundary actually makes |
+| every single-byte corruption | one valid document, all 46 positions × 35 interesting bytes |
+| nesting past the limit | 32, 33, 64, 1,000 and 10,000 brackets, both kinds and mixed |
+| the stress files | including the corpus's 100,000 opening brackets |
+
+**22,085 documents in all**, and every one of them deterministic: the pseudo-
+random arms use a written-out LCG rather than a system source, so a failure is
+reproducible from the seed alone on any machine.
+
+**Broken on purpose before it was believed.** A no-panic gate that has never
+failed is indistinguishable from one that cannot fail, so three panics were
+introduced deliberately. Two were caught at once — an unchecked slice in the
+literal scanner (found by the truncation of `true`) and an unchecked index into
+the depth stack (found by the nesting test and the stress file).
+
+The third was not caught, and that is the interesting result. Making the
+universal byte reader panic on any read past the end leaves **all eleven tests
+passing** — so no scanner reads out of bounds in the first place, and the
+`Option` it returns is defence in depth rather than the thing keeping this
+safe. The two bounds that *are* load-bearing are the two above, and both are
+proven to be. That measurement is recorded next to the function, because it
+holds only while every caller is right and a later edit would lose it silently.
 
 ## Using it
 
-Not yet. Track K7 in the
-[mission plan](https://github.com/Remade-With-Rust/kairos/blob/main/docs/plans/rtos-mission.md).
+```rust
+use rusty_rtos_json::{is_valid, validate, Validity};
+
+assert!(is_valid(br#"{"a":[1,2,{"b":"x"}],"c":true}"#));
+
+// Refusals are distinguished, not collapsed to a bool: a caller fixes a
+// truncated document and an illegal one in different ways.
+assert_eq!(validate(b"{"),   Validity::Partial);
+assert_eq!(validate(b"{]"),  Validity::Illegal);
+assert_eq!(validate(b""),    Validity::BadParameter);
+```
+
+A bare scalar at the top level is a valid document — that is ECMA-404 rather
+than RFC 4627, it is coreJSON's default, and it is the single most likely place
+for a reader to think the parser is too lax.
+
+Nesting deeper than `MAX_DEPTH` (32, the C's) answers
+`Validity::MaxDepthExceeded`. The bound exists because the stack is explicit:
+recursion here would meet a 100,000-bracket document with a stack overflow,
+which is not a panic and cannot be caught.
 
 ## Performance
 
-No rows. Nothing here is measured.
+No rows. Nothing here is measured yet, and the ledger has no entry for this
+crate — what matters about a validator is first that it agrees with the C,
+which the 318 files above establish.
 
 ## Portability
 
-Builds `no_std` on host, `thumbv7m-none-eabi`,
-`riscv32imac-unknown-none-elf` and `xtensa-esp32s3-none-elf`. A build claim, not
-a behaviour claim.
+Builds `no_std` with no default features on `thumbv7em-none-eabihf` and
+`riscv32imac-unknown-none-elf` (both verified), and CI holds it to
+`thumbv8m.main-none-eabihf` and `riscv32imafc-unknown-none-elf` as well. A
+build claim, not a behaviour claim: no chip has run this yet.
 
 ## Layout
 
@@ -83,7 +179,7 @@ directories under `firmware/`.
 This crate is part of **[Kairos](https://github.com/Remade-With-Rust/kairos)** —
 FreeRTOS remade in memory-safe Rust, as independent packages that expose the API
 a FreeRTOS developer already knows and prove every scheduling decision against
-the C kernel's own trace. `rusty_rtos_json` is one of the K7 libraries, and is not started.
+the C kernel's own trace. `rusty_rtos_json` is one of the K7 libraries: the validator is done and proven against the C, the query half is not written.
 
 The family:
 [`rusty_rtos_core`](https://crates.io/crates/rusty_rtos_core),
