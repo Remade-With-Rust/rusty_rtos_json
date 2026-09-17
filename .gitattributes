@@ -1,0 +1,10 @@
+# The vendored oracle corpus is DATA, not source. Its bytes are the whole
+# point: 10 of the 318 JSONTestSuite files carry deliberate CR and LF inside
+# them, and with core.autocrlf on, git would store them normalised and hand a
+# Linux checkout different bytes from a Windows one. The verdicts happen not
+# to change -- that was measured, 318/318 either way -- but "we ran the corpus
+# pinned at 1ef36fa" would stop being exactly true, and that is the claim.
+oracle/** -text
+
+# The captured C verdicts are compared line by line; leave them alone too.
+oracle/corejson.trace -text
