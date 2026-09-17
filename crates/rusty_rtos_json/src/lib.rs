@@ -2,14 +2,20 @@
 #![forbid(unsafe_code)]
 //! `rusty_rtos_json` — coreJSON remade in Rust.
 //!
-//! **What is here:** `JSON_Validate`, the strict ECMA-404 validator. It agrees
-//! with coreJSON v3.3.1 on all 318 files of JSONTestSuite and passes the suite
-//! outright (95/95 accepted, 188/188 rejected). Zero allocation, `no_std`,
-//! `forbid(unsafe)`, with a no-panic gate.
+//! **The validator.** `JSON_Validate`, strict ECMA-404. It agrees with coreJSON
+//! v3.3.1 on all 318 files of JSONTestSuite and passes the suite outright
+//! (95/95 accepted, 188/188 rejected).
 //!
-//! **What is not:** `JSON_Search`, `JSON_SearchConst` and `JSON_Iterate`. The
-//! query half of coreJSON is not written yet, and this crate does not pretend
-//! otherwise.
+//! **The query engine.** `JSON_SearchConst` and `JSON_Iterate`, diffed against
+//! the C over 2,124 queries and 348 iterations as a 3,089-line trace. A query
+//! returns a sub-slice of the buffer you already have: no tree, no copy.
+//!
+//! Zero allocation throughout, `no_std`, `forbid(unsafe)`, with a no-panic gate
+//! over both halves.
+//!
+//! **What is not here:** a serialiser, which coreJSON does not have either, and
+//! `JSON_SearchT`, which is a cast of `JSON_SearchConst` that exists only so C
+//! callers can pass a mutable buffer.
 //!
 //! This is the facade: it re-exports the `no_std` core. Depend on this crate;
 //! reach into the sub-crates only when you are building a port or a backend.

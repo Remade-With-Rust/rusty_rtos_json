@@ -13,3 +13,7 @@ Thumbs.db
 oracle/probe
 oracle/probe.exe
 oracle/probe.pdb
+oracle/search_driver
+oracle/search_driver.exe
+oracle/search_driver.pdb
+oracle/corpus.list

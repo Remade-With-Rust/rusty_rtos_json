@@ -55,8 +55,18 @@ score)
         [ "$("$here/probe" "$f")" = "0" ] && basename "$f"
     done
     ;;
+search)
+    # The query differential's C arm. The file list is generated with LC_ALL=C
+    # so the trace's ORDER is a property of the corpus, not of the locale the
+    # machine happened to be in.
+    cc -O2 -g -w -I "$lib/source/include"        -o "$here/search_driver" "$src" "$here/search_driver.c"
+    ( cd "$corpus" && LC_ALL=C ls *.json ) > "$here/corpus.list"
+    ( cd "$here" && ./search_driver corpus.list ) > "$here/search.trace"
+    rm -f "$here/corpus.list"
+    echo "wrote $(wc -l < "$here/search.trace") lines to $here/search.trace"
+    ;;
 *)
-    echo "usage: run.sh [trace|score]" >&2
+    echo "usage: run.sh [trace|score|search]" >&2
     exit 2
     ;;
 esac

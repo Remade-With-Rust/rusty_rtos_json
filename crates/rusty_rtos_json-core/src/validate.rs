@@ -94,14 +94,14 @@ const fn is_matching_bracket(open: u8, close: u8) -> bool {
 /// places where the bound is genuinely load-bearing are
 /// [`skip_literal`]'s slice and the depth stack in [`validate`]; poisoning
 /// either one panics immediately.
-fn at(buf: &[u8], i: usize) -> Option<u8> {
+pub(crate) fn at(buf: &[u8], i: usize) -> Option<u8> {
     buf.get(i).copied()
 }
 
 // ---- the scanners --------------------------------------------------------
 
 /// `skipSpace`.
-fn skip_space(buf: &[u8], start: &mut usize, max: usize) {
+pub(crate) fn skip_space(buf: &[u8], start: &mut usize, max: usize) {
     let mut i = *start;
     while i < max {
         match at(buf, i) {
@@ -303,7 +303,7 @@ fn skip_escape(buf: &[u8], start: &mut usize, max: usize) -> bool {
 }
 
 /// `skipString`.
-fn skip_string(buf: &[u8], start: &mut usize, max: usize) -> bool {
+pub(crate) fn skip_string(buf: &[u8], start: &mut usize, max: usize) -> bool {
     let mut i = *start;
     let mut ret = false;
 
@@ -363,21 +363,57 @@ fn skip_any_literal(buf: &[u8], start: &mut usize, max: usize) -> bool {
         || skip_literal(buf, start, max, b"null")
 }
 
-/// `skipDigits`, without the `outValue` half — [`validate`] never asks for it.
-fn skip_digits(buf: &[u8], start: &mut usize, max: usize) -> bool {
+/// The largest value an array index may reach: `MAX_INDEX_VALUE`, which the
+/// C's header defines as `0x7FFFFFF7`, or 2^31 - 9.
+pub(crate) const MAX_INDEX_VALUE: i32 = 0x7FFF_FFF7;
+
+/// `MAX_FACTOR`: the largest accumulator that can still take another digit.
+const MAX_FACTOR: i32 = MAX_INDEX_VALUE / 10;
+
+/// `skipDigits`, including the `outValue` half.
+///
+/// [`validate`] never asks for the value, but `multiSearch` reads an array
+/// index with it, and the overflow behaviour is load-bearing there: once the
+/// accumulator passes `MAX_FACTOR` the C latches it to **-1** and stops
+/// accumulating, and a negative index is what makes `[99999999999999999999]`
+/// a `BadParameter` rather than a wrapped-around lookup.
+///
+/// Returns `None` when there were no digits at all (the C's `false`), and
+/// otherwise the accumulated value, which may be -1.
+pub(crate) fn skip_digits_value(buf: &[u8], start: &mut usize, max: usize) -> Option<i32> {
     let from = *start;
     let mut i = from;
+    let mut value: i32 = 0;
+
     while i < max {
-        match at(buf, i) {
-            Some(c) if is_digit(c) => i = i.saturating_add(1),
-            _ => break,
+        let Some(c) = at(buf, i) else { break };
+        if !is_digit(c) {
+            break;
         }
+
+        if value > -1 {
+            let n = i32::from(hex_to_int(c));
+            value = if value <= MAX_FACTOR {
+                value.saturating_mul(10).saturating_add(n)
+            } else {
+                -1
+            };
+        }
+
+        i = i.saturating_add(1);
     }
+
     if i > from {
         *start = i;
-        return true;
+        return Some(value);
     }
-    false
+    None
+}
+
+/// `skipDigits` with `outValue == NULL`. The C skips only the accumulation,
+/// never the scan, so this is the same walk with the answer thrown away.
+fn skip_digits(buf: &[u8], start: &mut usize, max: usize) -> bool {
+    skip_digits_value(buf, start, max).is_some()
 }
 
 /// `skipDecimals`. Note it advances `start` only when digits FOLLOW the dot,
@@ -436,7 +472,7 @@ fn skip_number(buf: &[u8], start: &mut usize, max: usize) -> bool {
 }
 
 /// `skipAnyScalar`.
-fn skip_any_scalar(buf: &[u8], start: &mut usize, max: usize) -> bool {
+pub(crate) fn skip_any_scalar(buf: &[u8], start: &mut usize, max: usize) -> bool {
     skip_string(buf, start, max)
         || skip_any_literal(buf, start, max)
         || skip_number(buf, start, max)
@@ -446,7 +482,7 @@ fn skip_any_scalar(buf: &[u8], start: &mut usize, max: usize) -> bool {
 ///
 /// A comma before a closing bracket answers false, which is what makes a
 /// trailing comma illegal.
-fn skip_space_and_comma(buf: &[u8], start: &mut usize, max: usize) -> bool {
+pub(crate) fn skip_space_and_comma(buf: &[u8], start: &mut usize, max: usize) -> bool {
     skip_space(buf, start, max);
     let mut i = *start;
     if i < max && at(buf, i) == Some(b',') {
@@ -541,7 +577,7 @@ fn skip_scalars(buf: &[u8], start: &mut usize, max: usize, mode: u8) -> bool {
 }
 
 /// `skipCollection`: the explicit stack that replaces recursion.
-fn skip_collection(buf: &[u8], start: &mut usize, max: usize) -> Validity {
+pub(crate) fn skip_collection(buf: &[u8], start: &mut usize, max: usize) -> Validity {
     let mut ret = Validity::Partial;
     let mut stack = [0u8; MAX_DEPTH];
     // `int16_t depth = -1`, as an Option so there is no negative index.

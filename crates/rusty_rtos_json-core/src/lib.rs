@@ -29,4 +29,8 @@ pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 /// `JSON_Validate`: coreJSON's strict ECMA-404 validator.
 pub mod validate;
 
+/// `JSON_SearchConst` and `JSON_Iterate`: query a document in place.
+pub mod search;
+
+pub use search::{Kind, Match, NotFound, Pair, Pairs, Stopped, iterate, pairs, search};
 pub use validate::{MAX_DEPTH, Validity, is_valid, validate};

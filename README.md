@@ -6,14 +6,18 @@
 [![docs.rs](https://docs.rs/rusty_rtos_json/badge.svg)](https://docs.rs/rusty_rtos_json)
 [![license](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](#license)
 
-A `no_std` JSON validator, the Kairos remake of coreJSON. MIT OR Apache-2.0.
+A `no_std` JSON validator and in-place query engine, the Kairos remake of
+coreJSON. MIT OR Apache-2.0.
 
 **K7's second library**, and the first one in this family driven by bytes from
 the network rather than by our own kernel.
 
-- **Proven**: `JSON_Validate`, the strict ECMA-404 validator. It agrees with
+- **Proven, the validator**: `JSON_Validate`, strict ECMA-404. It agrees with
   coreJSON v3.3.1 on **all 318 files of JSONTestSuite**, and passes the suite
   outright — 95/95 accepted, 188/188 rejected.
+- **Proven, the query engine**: `JSON_SearchConst` and `JSON_Iterate`, over
+  **2,124 queries and 348 iterations** compared against the C as a 3,089-line
+  trace — status, offset, length and type, every time.
 - **Zero allocation, on purpose.** The depth stack is a fixed 32-byte array;
   there is no heap on any path, so the crate builds and runs the same on a
   Cortex-M with no allocator at all.
@@ -22,10 +26,9 @@ the network rather than by our own kernel.
   socket, so "cannot panic on any input" is not tidiness, it is the security
   property.
 
-**Known gaps.** `JSON_Search`, `JSON_SearchConst` and `JSON_Iterate` — the
-query half of coreJSON — are **not written**. This crate validates; it does not
-yet let you pull a value out by path. coreJSON has no serialiser and neither
-does this.
+**Known gaps.** coreJSON has no serialiser and neither does this. `JSON_SearchT`
+is absent on purpose: it is a cast of `JSON_SearchConst` that exists only to
+let C callers pass a mutable buffer, and Rust needs no such twin.
 
 - This package's plan: [docs/plans/rusty_rtos_json.md](https://github.com/Remade-With-Rust/rusty_rtos_json/blob/main/docs/plans/rusty_rtos_json.md)
 - Every number: [docs/LEDGER.md](https://github.com/Remade-With-Rust/rusty_rtos_json/blob/main/docs/LEDGER.md)
@@ -78,6 +81,67 @@ workload cannot fail is a differential about nothing.
 * **trailing commas** — allowing one fails 2;
 * **leading zeros** — allowing `01` fails 3.
 
+## Querying
+
+**2,124 queries and 348 iterations agree with `core_json.c`**, compared as a
+3,089-line trace, line for line.
+
+```sh
+cargo test -p rusty_rtos_json-core --test query
+```
+
+`search` takes a dotted, bracketed path and hands back a **sub-slice of the
+buffer you already have** — no tree, no copy, no allocation. `a.b[2].c` is the
+key `c` of the third element of the array at `a.b`.
+
+```rust
+use rusty_rtos_json::{search, pairs, Kind};
+
+let doc = br#"{"a":{"b":[10,20,{"c":"hi"}]}}"#;
+assert_eq!(search(doc, b"a.b[1]").unwrap().value, b"20");
+
+let found = search(doc, b"a.b[2].c").unwrap();
+assert_eq!(found.kind, Kind::String);   // quotes stripped, as the C does
+assert_eq!(found.value, b"hi");
+
+// Walk a collection instead. An array yields values with no keys.
+for pair in pairs(br#"{"x":1,"y":2}"#) {
+    let _ = (pair.key, pair.value, pair.kind);
+}
+```
+
+**Two refusal types, not one.** The C has a single `JSONStatus_t` and each
+function documents the subset it can return. Here `search` can only answer
+`Missing` or `BadQuery`, and `iterate` adds `NotACollection` — so they have
+different types and the impossible variant is not there to be matched on. The
+differential maps both back to the C's names, which is what makes the arms
+comparable at all.
+
+**Neither entry point validates first**, and neither does the C. A query walks
+whatever bytes it is handed. That is why the differential runs both of them
+over all 318 corpus files including the 188 that are malformed on purpose:
+walking a broken document is exactly where a reimplementation reads off the
+end. 70 of those malformed files still answer a query successfully, and every
+one of those answers had to match.
+
+**Poison-proven on five behaviours**, each a real place a reimplementation
+drifts:
+
+* a string's **quotes are stripped** from the value, and the length shortened
+  by two;
+* a **trailing separator** (`a.`) is a `BadQuery`, which is one `- 1` in the C;
+* the **first** duplicate key wins, not the last;
+* a **huge array index latches to -1** rather than wrapping, so
+  `[99999999999999999999]` is refused instead of reading element zero;
+* an **array element reports no key**, which the C signals with a NULL pointer.
+
+A sixth poison did **not** fire, and that is recorded rather than dropped:
+swapping the order in which a value is tried as a scalar and as a collection
+changes nothing anywhere in the 3,089 lines. The two scanners are disjoint on
+their first byte and neither moves the cursor when it fails, so the order is
+free — and a unit test now pins both halves of that, because an accidental
+property nobody checks is one edit away from being false.
+
 ## The no-panic gate
 
 The crate forbids `unsafe` and denies `unwrap`, `expect` and `panic`, so a
@@ -93,14 +157,16 @@ after the reachability:
 | every single-byte corruption | one valid document, all 46 positions × 35 interesting bytes |
 | nesting past the limit | 32, 33, 64, 1,000 and 10,000 brackets, both kinds and mixed |
 | the stress files | including the corpus's 100,000 opening brackets |
+| **the query surface** | 20,000 random documents x random queries; 20,000 iterations driven to exhaustion; every truncation and corruption of a nested document through 8 queries; all 318 corpus files through both entry points |
 
-**22,085 documents in all**, and every one of them deterministic: the pseudo-
-random arms use a written-out LCG rather than a system source, so a failure is
-reproducible from the seed alone on any machine.
+**73,005 documents in all** — 22,085 through the validator and 50,920
+through the query engine. Every one of them is deterministic: the
+pseudo-random arms use a written-out LCG rather than a system source, so a
+failure is reproducible from the seed alone on any machine.
 
 **Broken on purpose before it was believed.** A no-panic gate that has never
 failed is indistinguishable from one that cannot fail, so three panics were
-introduced deliberately. Two were caught at once — an unchecked slice in the
+introduced into the validator deliberately. Two were caught at once — an unchecked slice in the
 literal scanner (found by the truncation of `true`) and an unchecked index into
 the depth stack (found by the nesting test and the stress file).
 
@@ -112,7 +178,24 @@ safe. The two bounds that *are* load-bearing are the two above, and both are
 proven to be. That measurement is recorded next to the function, because it
 holds only while every caller is right and a later edit would lose it silently.
 
+**The query half needed a different kind of test, and it found a different kind
+of bug.** `iterate` carries a cursor the *caller* owns, so a version that failed
+to advance it would not panic and would not answer wrongly — it would hang, and
+a hang is the one failure a test runner reports as "still running" rather than
+as a bug. A standing test asserts the cursor strictly advances on every success,
+over 20,000 random documents. Stopping the cursor on purpose turns an infinite
+loop into a named assertion with the offending document printed.
+
+Two more poisons there did **not** fire, and they say the same thing the reader
+poison did: taking `multiSearch`'s narrowed sub-slice unchecked, and taking the
+returned slice unchecked, both leave every test passing. The narrowing
+arithmetic only ever shrinks, so those bounds cannot fail — they stay as
+`get` rather than indexing because that is what keeps "cannot panic" a property
+of the code rather than of the current call graph.
+
 ## Using it
+
+The validator; [Querying](#querying) has the other half.
 
 ```rust
 use rusty_rtos_json::{is_valid, validate, Validity};
@@ -137,9 +220,10 @@ which is not a panic and cannot be caught.
 
 ## Performance
 
-No rows. Nothing here is measured yet, and the ledger has no entry for this
-crate — what matters about a validator is first that it agrees with the C,
-which the 318 files above establish.
+No speed row and no size row: nothing here has been benchmarked, and nothing
+has run on a chip. The ledger does carry this crate's **counts** — the 318
+files, the 2,124 queries, the 73,005 documents — because a count is a number
+and belongs there with its method, the same as a timing would.
 
 ## Portability
 
@@ -152,7 +236,8 @@ build claim, not a behaviour claim: no chip has run this yet.
 
 ```text
 crates/rusty_rtos_json          facade: re-exports + prelude; the crate you depend on
-crates/rusty_rtos_json-core     no_std (+ alloc); forbid(unsafe); types, traits, algorithms
+crates/rusty_rtos_json-core     no_std (+ alloc); forbid(unsafe); types,
+traits, algorithms
 firmware/                per-chip example projects, excluded from the workspace
 docs/plans/              this package's plan and its hardening audit
 docs/LEDGER.md           every number, with its method line
@@ -179,7 +264,8 @@ directories under `firmware/`.
 This crate is part of **[Kairos](https://github.com/Remade-With-Rust/kairos)** —
 FreeRTOS remade in memory-safe Rust, as independent packages that expose the API
 a FreeRTOS developer already knows and prove every scheduling decision against
-the C kernel's own trace. `rusty_rtos_json` is one of the K7 libraries: the validator is done and proven against the C, the query half is not written.
+the C kernel's own trace. `rusty_rtos_json` is one of the K7 libraries: the
+validator is done and proven against the C, the query half is not written.
 
 The family:
 [`rusty_rtos_core`](https://crates.io/crates/rusty_rtos_core),
@@ -208,12 +294,14 @@ published sources and links no FreeRTOS code.
 
 ---
 
-<!-- HARDENING-TABLE:BEGIN generated by use-protection-please — edit docs/plans/use-protection-please.md, not this block -->
+<!-- HARDENING-TABLE:BEGIN generated by use-protection-please — edit
+docs/plans/use-protection-please.md, not this block -->
 ## Hardening status
 
 **Tier** critical-path · **Audited** 2026-09-16 (v0.1.0 release pass) · **v1.0.0 gates** 7/17 · [Full checklist](https://github.com/Remade-With-Rust/rusty_rtos_json/blob/main/docs/plans/use-protection-please.md)
 
-`██████░░░░░░░░░░░░░░` **31%** &nbsp;·&nbsp; 11 Completed · 0 Scheduled · 25 Incomplete · 19 N/A
+`██████░░░░░░░░░░░░░░` **31%** &nbsp;·&nbsp; 11 Completed · 0 Scheduled · 25
+Incomplete · 19 N/A
 
 | Phase | ✅ Completed | 🗓 Scheduled | ⬜ Incomplete | · N/A |
 |---|--:|--:|--:|--:|
@@ -232,7 +320,9 @@ published sources and links no FreeRTOS code.
 | 12 — Compliance controls | 0 | 0 | 0 | 14 |
 | **Total** | **11** | **0** | **25** | **19** |
 
-Gates waived for 0.x are listed with their reasons in the plan's "v0.1.0 release decision" section — an Incomplete gate not listed there is an omission, not a decision.
+Gates waived for 0.x are listed with their reasons in the plan's "v0.1.0
+release decision" section — an Incomplete gate not listed there is an
+omission, not a decision.
 
 **Architect** — [Tim Almond](https://github.com/Ttimmahlax) — accountable for this unit's security design; rendered
 <!-- HARDENING-TABLE:END -->
