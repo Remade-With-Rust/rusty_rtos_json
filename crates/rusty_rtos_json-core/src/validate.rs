@@ -306,6 +306,12 @@ fn skip_escape(buf: &[u8], start: &mut usize, max: usize) -> bool {
 pub(crate) fn skip_string(buf: &[u8], start: &mut usize, max: usize) -> bool {
     let mut i = *start;
     let mut ret = false;
+    // `max` is a promise about the document; the buffer is the promise about
+    // memory. Clamping one to the other says so once, and every read below is
+    // then provably inside the slice -- where before each one carried its own
+    // bounds check. Past the buffer the old loop stopped on a `None` read;
+    // this one stops on the bound, at the same index.
+    let max = max.min(buf.len());
 
     if i < max && at(buf, i) == Some(b'"') {
         i = i.saturating_add(1);
