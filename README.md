@@ -7,10 +7,8 @@
 [![license](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](#license)
 
 A `no_std` JSON validator and in-place query engine, the Kairos remake of
-coreJSON. MIT OR Apache-2.0.
-
-**K7's second library**, and the first one in this family driven by bytes from
-the network rather than by our own kernel.
+coreJSON. It agrees with the C on all 318 files of JSONTestSuite, and passes
+the suite outright.
 
 - **Proven, the validator**: `JSON_Validate`, strict ECMA-404. It agrees with
   coreJSON v3.3.1 on **all 318 files of JSONTestSuite**, and passes the suite
