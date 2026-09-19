@@ -609,6 +609,11 @@ fn skip_object_scalars(buf: &[u8], start: &mut usize, max: usize) -> bool {
 
 /// `skipScalars`.
 fn skip_scalars(buf: &[u8], start: &mut usize, max: usize, mode: u8) -> bool {
+    // Clamped once: the guard below already says `i < max`, and clamping is
+    // what makes that also say the read is inside the buffer. Past the buffer
+    // the old `else` answered true; the clamped guard answers true at the
+    // same index, by the line above it.
+    let max = max.min(buf.len());
     skip_space(buf, start, max);
     let i = *start;
     if i >= max {
