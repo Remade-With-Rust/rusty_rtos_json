@@ -688,8 +688,10 @@ pub(crate) fn skip_collection(buf: &[u8], start: &mut usize, max: usize) -> Vali
     let max = max.min(buf.len());
     let mut ret = Validity::Partial;
     let mut stack = [0u8; MAX_DEPTH];
-    // `int16_t depth = -1`, as an Option so there is no negative index.
-    let mut depth: Option<usize> = None;
+    // `int16_t depth = -1`, as a count so there is no negative index: zero
+    // is the C's -1, and level `d` is count `d + 1`. Carrying it as an
+    // `Option` instead meant testing a discriminant before every use of it.
+    let mut depth = 0usize;
     let mut i = *start;
 
     while i < max {
@@ -698,14 +700,12 @@ pub(crate) fn skip_collection(buf: &[u8], start: &mut usize, max: usize) -> Vali
 
         match c {
             b'{' | b'[' => {
-                let next = match depth {
-                    None => 0usize,
-                    Some(d) => d.saturating_add(1),
-                };
+                // The count is the index of the slot about to be filled.
+                let next = depth;
                 if next >= MAX_DEPTH {
                     ret = Validity::MaxDepthExceeded;
                 } else {
-                    depth = Some(next);
+                    depth = next.saturating_add(1);
                     if let Some(slot) = stack.get_mut(next) {
                         *slot = c;
                     }
@@ -715,12 +715,12 @@ pub(crate) fn skip_collection(buf: &[u8], start: &mut usize, max: usize) -> Vali
                 }
             }
             b'}' | b']' => {
-                let d = depth.unwrap_or(0);
+                let d = depth.saturating_sub(1);
                 let open = stack.get(d).copied().unwrap_or(0);
                 // The nested case: close one level and carry on.
-                if depth.is_some_and(|d| d > 0) && d < MAX_DEPTH && is_matching_bracket(open, c) {
+                if depth > 1 && d < MAX_DEPTH && is_matching_bracket(open, c) {
                     let outer = d.saturating_sub(1);
-                    depth = Some(outer);
+                    depth = outer.saturating_add(1);
                     let mode = stack.get(outer).copied().unwrap_or(0);
                     if skip_space_and_comma(buf, &mut i, max) {
                         if !skip_scalars(buf, &mut i, max, mode) {
@@ -733,7 +733,7 @@ pub(crate) fn skip_collection(buf: &[u8], start: &mut usize, max: usize) -> Vali
                         ret = Validity::Illegal;
                     }
                 } else {
-                    ret = if depth == Some(0) && is_matching_bracket(open, c) {
+                    ret = if depth == 1 && is_matching_bracket(open, c) {
                         Validity::Valid
                     } else {
                         Validity::Illegal
