@@ -139,6 +139,12 @@ const fn shortest_utf8(length: usize, value: u32) -> bool {
 }
 
 /// `skipUTF8MultiByte`.
+///
+/// Out of line on purpose. Inlined, its leading-bit count and its
+/// shortest-form table live inside [`skip_string`]'s frame and are paid for
+/// by every string, including the ones that are entirely ASCII. See the note
+/// on [`skip_escape`], which has to leave with it.
+#[inline(never)]
 fn skip_utf8_multibyte(buf: &[u8], start: &mut usize, max: usize) -> bool {
     let mut i = *start;
     let Some(first) = at(buf, i) else {
@@ -280,6 +286,18 @@ fn skip_hex_escape(buf: &[u8], start: &mut usize, max: usize) -> bool {
 }
 
 /// `skipEscape`.
+///
+/// Out of line on purpose, and this is where most of it is: the `u` arm's
+/// four hex digits and surrogate pairing needed callee-saved registers that
+/// [`skip_string`] then had to push and pop on every call, escape or no
+/// escape.
+///
+/// It only pays if [`skip_utf8_multibyte`] goes with it -- either one left
+/// inline still claims the registers, so outlining this one alone takes half
+/// as much off `search-ir` and puts nearly three times as much back on
+/// `json-ir`. Keeping the two-byte escapes here and outlining only the rest
+/// is worse than both, for the same reason: the match stays.
+#[inline(never)]
 fn skip_escape(buf: &[u8], start: &mut usize, max: usize) -> bool {
     let mut i = *start;
     let mut ret = false;
