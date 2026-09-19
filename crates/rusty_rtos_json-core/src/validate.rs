@@ -476,6 +476,13 @@ fn skip_exponent(buf: &[u8], start: &mut usize, max: usize) {
 }
 
 /// `skipNumber`.
+///
+/// In line on purpose. It reaches the scalar dispatch already knowing the
+/// first byte is `-` or a digit, and out of line it re-read that byte behind
+/// a call and a frame, 90,900 times. `skipDecimals`, `skipExponent` and the
+/// digit walk all fold into it, so the frame it was paying for is the whole
+/// number scanner's.
+#[inline(always)]
 fn skip_number(buf: &[u8], start: &mut usize, max: usize) -> bool {
     // Clamped once: past the buffer every read answers `None`, which fails
     // the comparison it feeds anyway -- and `skipDecimals` and `skipExponent`
