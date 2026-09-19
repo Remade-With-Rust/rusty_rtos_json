@@ -626,6 +626,17 @@ fn skip_object_scalars(buf: &[u8], start: &mut usize, max: usize) -> bool {
 }
 
 /// `skipScalars`.
+///
+/// In line on purpose. `skip_collection` is its only caller, from two sites,
+/// and left out of line it was paying six callee-saved pushes, six pops and
+/// a call on every one of them to decide whether a collection has contents.
+/// It is a big function and LLVM declined on size; the frame is the reason
+/// to overrule that.
+///
+/// The same attribute on `skip_any_scalar` costs 3,972,988 on search-ir
+/// while taking 1,105,466 off json-ir, and on `skip_collection` it costs
+/// both. Neither is here.
+#[inline(always)]
 fn skip_scalars(buf: &[u8], start: &mut usize, max: usize, mode: u8) -> bool {
     // Clamped once: the guard below already says `i < max`, and clamping is
     // what makes that also say the read is inside the buffer. Past the buffer
