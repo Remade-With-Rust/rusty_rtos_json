@@ -74,8 +74,13 @@ const fn is_close_bracket(c: u8) -> bool {
 }
 
 /// `isMatchingBracket_`.
+///
+/// Both pairs are two apart in ASCII -- `[` `]` are 0x5B 0x5D and `{` `}`
+/// are 0x7B 0x7D -- so the distance answers first and the opener is checked
+/// only when it matches. That second test is what keeps this a predicate
+/// about brackets rather than about any two bytes two apart.
 const fn is_matching_bracket(open: u8, close: u8) -> bool {
-    (open == b'{' && close == b'}') || (open == b'[' && close == b']')
+    open.wrapping_add(2) == close && is_open_bracket(open)
 }
 
 /// The byte at `i`, or `None` past the end. Every scanner reads through this,
