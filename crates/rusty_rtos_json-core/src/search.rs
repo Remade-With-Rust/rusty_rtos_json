@@ -158,10 +158,17 @@ fn next_value(buf: &[u8], start: &mut usize, max: usize) -> Option<(usize, usize
     // fails, which is what makes the order free -- and
     // `the_two_scanners_are_disjoint` below pins both halves of that, so it
     // stays a property rather than a coincidence.
-    let found = if skip_any_scalar(buf, &mut i, max) {
-        true
-    } else {
-        skip_collection(buf, &mut i, max) == Validity::Valid
+    // A value that opens a collection is not a scalar, and the note above is
+    // what makes taking it first free: the two scanners are disjoint on their
+    // first byte and neither moves the cursor when it fails. So the bracket
+    // case skips a scalar attempt that could only answer false, and every
+    // other byte keeps the original order exactly.
+    let found = match at(buf, i) {
+        Some(b'{' | b'[') => skip_collection(buf, &mut i, max) == Validity::Valid,
+        _ => {
+            skip_any_scalar(buf, &mut i, max)
+                || skip_collection(buf, &mut i, max) == Validity::Valid
+        }
     };
 
     if !found {
