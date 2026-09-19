@@ -580,6 +580,13 @@ pub(crate) fn skip_space_and_comma(buf: &[u8], start: &mut usize, max: usize) ->
 }
 
 /// `skipArrayScalars`.
+///
+/// In line on purpose, and with [`skip_object_scalars`]: `skip_scalars` is
+/// the only caller of either, it has already skipped the space and read the
+/// byte that chose between them, and out of line each one re-established
+/// that behind a call and a frame. Worth -994,800 on search-ir on its own
+/// and -2,432,600 on json-ir.
+#[inline(always)]
 fn skip_array_scalars(buf: &[u8], start: &mut usize, max: usize) -> bool {
     // Clamped once: past the buffer every read answers `None`, which
     // is what the loop below breaks on anyway.
@@ -613,6 +620,10 @@ fn skip_array_scalars(buf: &[u8], start: &mut usize, max: usize) -> bool {
 }
 
 /// `skipObjectScalars`.
+///
+/// In line on purpose; see [`skip_array_scalars`]. Worth -2,550,612 on
+/// search-ir on its own and -598,770 on json-ir.
+#[inline(always)]
 fn skip_object_scalars(buf: &[u8], start: &mut usize, max: usize) -> bool {
     // Clamped once: past the buffer every read answers `None`, which
     // is what the loop below breaks on anyway.
