@@ -201,10 +201,15 @@ fn next_key_value_pair(
     let key = key_start.saturating_add(1);
     let key_length = i.saturating_sub(key_start).saturating_sub(2);
 
-    skip_space(buf, &mut i, max);
-
+    // `skip_space` stops on a colon, so when the colon is already here the
+    // scan it replaces was going to be a no-op. One comparison finds that
+    // out; only a key with space after it pays for the scan as well.
     if !(i < max && at(buf, i) == Some(b':')) {
-        return None;
+        skip_space(buf, &mut i, max);
+
+        if !(i < max && at(buf, i) == Some(b':')) {
+            return None;
+        }
     }
 
     i = i.saturating_add(1);
