@@ -507,8 +507,29 @@ fn skip_number(buf: &[u8], start: &mut usize, max: usize) -> bool {
     ret
 }
 
-/// `skipAnyScalar`.
+/// `skipAnyScalar`, out of line. The callers that want it in line call
+/// [`any_scalar`] instead.
 pub(crate) fn skip_any_scalar(buf: &[u8], start: &mut usize, max: usize) -> bool {
+    any_scalar(buf, start, max)
+}
+
+/// The body of [`skip_any_scalar`], for the call sites that want it in line.
+///
+/// # Why this is split at all
+///
+/// One function has one body, so an inlining decision on it is made once and
+/// then serves every caller -- and here the callers do not agree. Forcing it
+/// in line everywhere costs search-ir 3,972,988 while taking 1,105,466 off
+/// json-ir, and leaving it out of line everywhere is the reverse. Neither
+/// instrument is wrong; they call it from different places.
+///
+/// Splitting the body from the symbol hands the choice back to each site.
+/// The two below -- the array and object scalar walks, which is the whole of
+/// what `validate` does -- take it in line. `next_value` in the query walk
+/// keeps the call, and that is where the 3,972,988 was. Both instruments
+/// then win: search-ir -669,013 and json-ir -1,117,915.
+#[inline(always)]
+fn any_scalar(buf: &[u8], start: &mut usize, max: usize) -> bool {
     // One dispatch on the first byte instead of up to three failed parses.
     // JSON is unambiguous at the first character, so at most one of these can
     // succeed: `skip_string` needs `"`, `skip_any_literal` needs `t`, `f` or
@@ -567,7 +588,7 @@ fn skip_array_scalars(buf: &[u8], start: &mut usize, max: usize) -> bool {
         if at(buf, i).is_some_and(is_open_bracket) {
             break;
         }
-        if !skip_any_scalar(buf, &mut i, max) {
+        if !any_scalar(buf, &mut i, max) {
             break;
         }
         if !skip_space_and_comma(buf, &mut i, max) {
@@ -610,7 +631,7 @@ fn skip_object_scalars(buf: &[u8], start: &mut usize, max: usize) -> bool {
             *start = i;
             break;
         }
-        if !skip_any_scalar(buf, &mut i, max) {
+        if !any_scalar(buf, &mut i, max) {
             ret = false;
             break;
         }
