@@ -178,7 +178,7 @@ fn next_value(buf: &[u8], start: &mut usize, max: usize) -> Option<(usize, usize
     }
 
     *start = i;
-    Some((value_start, i.saturating_sub(value_start)))
+    Some((value_start, i.wrapping_sub(value_start)))
 }
 
 /// `nextKeyValuePair`: a `"key" : value` pair, and where it ends.
@@ -194,12 +194,22 @@ fn next_key_value_pair(
     let mut i = *start;
     let key_start = i;
 
+    // The cursors and lengths in this walk wrap rather than saturate. Every
+    // one of them is already bounded: a cursor is below `max`, which is at
+    // most the buffer's length; `i - key_start` is at least two once
+    // `skip_string` has consumed a pair of quotes; and the array index stops
+    // itself at `u32::MAX`. The saturation could not fire and cost a
+    // conditional move on every pair of every document.
+    //
+    // The two exceptions are the slice bounds below, and they are marked
+    // where they are: saturation on a range's far end is what proves the
+    // range well ordered, and wrapping it costs the bounds elision.
     if !skip_string(buf, &mut i, max) {
         return None;
     }
 
-    let key = key_start.saturating_add(1);
-    let key_length = i.saturating_sub(key_start).saturating_sub(2);
+    let key = key_start.wrapping_add(1);
+    let key_length = i.wrapping_sub(key_start).wrapping_sub(2);
 
     // `skip_space` stops on a colon, so when the colon is already here the
     // scan it replaces was going to be a no-op. One comparison finds that
@@ -212,7 +222,7 @@ fn next_key_value_pair(
         }
     }
 
-    i = i.saturating_add(1);
+    i = i.wrapping_add(1);
     skip_space(buf, &mut i, max);
 
     let (value, value_length) = next_value(buf, &mut i, max)?;
@@ -239,7 +249,7 @@ fn object_search(buf: &[u8], max: usize, query: &[u8]) -> Option<(usize, usize)>
         }
     }
 
-    i = i.saturating_add(1);
+    i = i.wrapping_add(1);
     skip_space(buf, &mut i, max);
 
     while i < max {
@@ -248,6 +258,8 @@ fn object_search(buf: &[u8], max: usize, query: &[u8]) -> Option<(usize, usize)>
             break;
         };
 
+        // Saturating, unlike the cursors: this closes a range, and it is
+        // what proves `key..key + key_length` well ordered.
         if query.len() == key_length && buf.get(key..key.saturating_add(key_length)) == Some(query)
         {
             return Some((value, value_length));
@@ -275,7 +287,7 @@ fn array_search(buf: &[u8], max: usize, query_index: u32) -> Option<(usize, usiz
         }
     }
 
-    i = i.saturating_add(1);
+    i = i.wrapping_add(1);
     skip_space(buf, &mut i, max);
 
     let mut current: u32 = 0;
@@ -295,7 +307,7 @@ fn array_search(buf: &[u8], max: usize, query_index: u32) -> Option<(usize, usiz
             break;
         }
 
-        current = current.saturating_add(1);
+        current = current.wrapping_add(1);
     }
 
     None
@@ -311,14 +323,14 @@ fn skip_query_part(query: &[u8], start: &mut usize, max: usize) -> Option<usize>
 
     while i < max {
         match at(query, i) {
-            Some(c) if c != QUERY_KEY_SEPARATOR && c != b'[' => i = i.saturating_add(1),
+            Some(c) if c != QUERY_KEY_SEPARATOR && c != b'[' => i = i.wrapping_add(1),
             _ => break,
         }
     }
 
     if i > from {
         *start = i;
-        return Some(i.saturating_sub(from));
+        return Some(i.wrapping_sub(from));
     }
     None
 }
@@ -346,7 +358,7 @@ fn multi_search(buf: &[u8], query: &[u8]) -> Result<(usize, usize), NotFound> {
         };
 
         let found = if at(query, i) == Some(b'[') {
-            i = i.saturating_add(1);
+            i = i.wrapping_add(1);
 
             let query_index = skip_digits_value(query, &mut i, query_length).unwrap_or(-1);
 
@@ -354,7 +366,7 @@ fn multi_search(buf: &[u8], query: &[u8]) -> Result<(usize, usize), NotFound> {
                 return Err(NotFound::BadQuery);
             }
 
-            i = i.saturating_add(1);
+            i = i.wrapping_add(1);
 
             // `query_index` is non-negative and at most MAX_INDEX_VALUE, so
             // this conversion cannot lose anything.
@@ -373,6 +385,7 @@ fn multi_search(buf: &[u8], query: &[u8]) -> Result<(usize, usize), NotFound> {
                 return Err(NotFound::BadQuery);
             }
 
+            // Saturating: a range's far end, as in `object_search`.
             let Some(key) = query.get(query_start..query_start.saturating_add(key_length)) else {
                 return Err(NotFound::BadQuery);
             };
@@ -384,11 +397,11 @@ fn multi_search(buf: &[u8], query: &[u8]) -> Result<(usize, usize), NotFound> {
             return Err(NotFound::Missing);
         };
 
-        start = start.saturating_add(value);
+        start = start.wrapping_add(value);
         length = value_length;
 
         if i < query_length && at(query, i) == Some(QUERY_KEY_SEPARATOR) {
-            i = i.saturating_add(1);
+            i = i.wrapping_add(1);
         }
     }
 
