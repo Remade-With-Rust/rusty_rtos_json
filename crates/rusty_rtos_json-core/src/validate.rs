@@ -459,6 +459,10 @@ fn skip_exponent(buf: &[u8], start: &mut usize, max: usize) {
 
 /// `skipNumber`.
 fn skip_number(buf: &[u8], start: &mut usize, max: usize) -> bool {
+    // Clamped once: past the buffer every read answers `None`, which fails
+    // the comparison it feeds anyway -- and `skipDecimals` and `skipExponent`
+    // fold into here, so one clamp covers all five of them.
+    let max = max.min(buf.len());
     let mut i = *start;
     let mut ret = false;
 
