@@ -385,21 +385,6 @@ fn skip_literal(buf: &[u8], start: &mut usize, max: usize, literal: &[u8]) -> bo
     false
 }
 
-/// `skipAnyLiteral`: `true`, `false` or `null`.
-fn skip_any_literal(buf: &[u8], start: &mut usize, max: usize) -> bool {
-    // The same dispatch as `skip_any_scalar`, one level down: the three
-    // literals begin with three different bytes, so comparing against all of
-    // them was two slice comparisons that could not match. `skip_literal`
-    // writes `*start` only when the slice equals the literal, so declining to
-    // run the two that cannot match changes nothing but the count.
-    match at(buf, *start) {
-        Some(b't') => skip_literal(buf, start, max, b"true"),
-        Some(b'f') => skip_literal(buf, start, max, b"false"),
-        Some(b'n') => skip_literal(buf, start, max, b"null"),
-        _ => false,
-    }
-}
-
 /// The largest value an array index may reach: `MAX_INDEX_VALUE`, which the
 /// C's header defines as `0x7FFFFFF7`, or 2^31 - 9.
 pub(crate) const MAX_INDEX_VALUE: i32 = 0x7FFF_FFF7;
@@ -544,11 +529,16 @@ pub(crate) fn skip_any_scalar(buf: &[u8], start: &mut usize, max: usize) -> bool
 fn any_scalar(buf: &[u8], start: &mut usize, max: usize) -> bool {
     // One dispatch on the first byte instead of up to three failed parses.
     // JSON is unambiguous at the first character, so at most one of these can
-    // succeed: `skip_string` needs `"`, `skip_any_literal` needs `t`, `f` or
-    // `n`, and `skip_number` needs `-` or a digit. The chain this replaces
+    // succeed: `skip_string` needs `"`, each literal needs its own initial,
+    // and `skip_number` needs `-` or a digit. The chain this replaces
     // tried the string, then all three literals, then the number -- so every
     // number paid for a failed string parse and three slice comparisons
     // before it began.
+    //
+    // `skipAnyLiteral` is folded in rather than called. It was the same
+    // dispatch one level down -- it read this byte again and matched it into
+    // the same three arms -- and the byte that says "this is a literal" is
+    // the byte that says which literal it is.
     //
     // Byte-identical by construction: each of the three writes `*start` only
     // on success, so a parse that cannot match leaves nothing behind, and not
@@ -560,7 +550,9 @@ fn any_scalar(buf: &[u8], start: &mut usize, max: usize) -> bool {
     // of something already tested.
     match at(buf, *start) {
         Some(b'"') => skip_string(buf, start, max),
-        Some(b't' | b'f' | b'n') => skip_any_literal(buf, start, max),
+        Some(b't') => skip_literal(buf, start, max, b"true"),
+        Some(b'f') => skip_literal(buf, start, max, b"false"),
+        Some(b'n') => skip_literal(buf, start, max, b"null"),
         Some(b'-' | b'0'..=b'9') => skip_number(buf, start, max),
         _ => false,
     }
