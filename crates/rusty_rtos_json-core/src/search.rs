@@ -159,16 +159,18 @@ fn next_value(buf: &[u8], start: &mut usize, max: usize) -> Option<(usize, usize
     // `the_two_scanners_are_disjoint` below pins both halves of that, so it
     // stays a property rather than a coincidence.
     // A value that opens a collection is not a scalar, and the note above is
-    // what makes taking it first free: the two scanners are disjoint on their
-    // first byte and neither moves the cursor when it fails. So the bracket
-    // case skips a scalar attempt that could only answer false, and every
-    // other byte keeps the original order exactly.
+    // what makes splitting on the first byte free: the two scanners are
+    // disjoint on it and neither moves the cursor when it fails.
+    //
+    // So each arm asks only the scanner that can still say yes. The bracket
+    // case skips a scalar attempt that could only answer false; the other
+    // case skips a collection attempt that could only answer false, because
+    // `skip_collection` reads that same byte, finds it is neither bracket --
+    // it does not skip space and has no other way in -- and stops at
+    // `Illegal`. `a_collection_must_open_with_a_bracket` pins that.
     let found = match at(buf, i) {
         Some(b'{' | b'[') => skip_collection(buf, &mut i, max) == Validity::Valid,
-        _ => {
-            skip_any_scalar(buf, &mut i, max)
-                || skip_collection(buf, &mut i, max) == Validity::Valid
-        }
+        _ => skip_any_scalar(buf, &mut i, max),
     };
 
     if !found {
@@ -581,6 +583,52 @@ impl<'a> Iterator for Pairs<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Why [`next_value`] asks only one scanner per first byte.
+    ///
+    /// `skip_collection` reads the byte at the cursor and takes one of three
+    /// arms: `{` or `[` opens a level, a closing bracket at depth zero is
+    /// illegal, and everything else is illegal too. It does not skip leading
+    /// space and it has no other way in -- so it can only answer `Valid` for
+    /// a buffer that opens with a bracket, and `next_value`'s other arm has
+    /// already matched both of those away.
+    ///
+    /// The implication only runs one way: replacing the opener of `[1,2]`
+    /// with `{` does not make it valid. So this asserts the direction it
+    /// relies on and no more.
+    #[test]
+    fn a_collection_must_open_with_a_bracket() {
+        const DOCS: [&[u8]; 5] = [b"{}", b"[]", b"{\"a\":1}", b"[1,2]", b"[{}]"];
+
+        for doc in DOCS {
+            let length = doc.len();
+            let mut buf = [0u8; 8];
+            assert!(length <= buf.len(), "a document here outgrew the buffer");
+            let Some(slot) = buf.get_mut(..length) else {
+                unreachable!("the assertion above covers this")
+            };
+            slot.copy_from_slice(doc);
+
+            for first in 0u8..=u8::MAX {
+                let Some(head) = buf.first_mut() else {
+                    unreachable!("the buffer is never empty")
+                };
+                *head = first;
+
+                let Some(input) = buf.get(..length) else {
+                    unreachable!("length came from a slice of this buffer")
+                };
+
+                let mut at = 0usize;
+                if skip_collection(input, &mut at, length) == Validity::Valid {
+                    assert!(
+                        first == b'{' || first == b'[',
+                        "a collection was valid opening with {first:#04x}"
+                    );
+                }
+            }
+        }
+    }
 
     /// Why [`next_value`] may try its two scanners in either order.
     ///
