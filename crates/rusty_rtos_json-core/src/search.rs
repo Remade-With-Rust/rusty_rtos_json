@@ -229,10 +229,14 @@ fn next_key_value_pair(
 fn object_search(buf: &[u8], max: usize, query: &[u8]) -> Option<(usize, usize)> {
     let mut i = 0usize;
 
-    skip_space(buf, &mut i, max);
-
+    // `skip_space` stops on a bracket, so when the bracket is already
+    // here the scan it replaces was a no-op. See `next_key_value_pair`.
     if !(i < max && at(buf, i) == Some(b'{')) {
-        return None;
+        skip_space(buf, &mut i, max);
+
+        if !(i < max && at(buf, i) == Some(b'{')) {
+            return None;
+        }
     }
 
     i = i.saturating_add(1);
@@ -261,10 +265,14 @@ fn object_search(buf: &[u8], max: usize, query: &[u8]) -> Option<(usize, usize)>
 fn array_search(buf: &[u8], max: usize, query_index: u32) -> Option<(usize, usize)> {
     let mut i = 0usize;
 
-    skip_space(buf, &mut i, max);
-
+    // `skip_space` stops on a bracket, so when the bracket is already
+    // here the scan it replaces was a no-op. See `next_key_value_pair`.
     if !(i < max && at(buf, i) == Some(b'[')) {
-        return None;
+        skip_space(buf, &mut i, max);
+
+        if !(i < max && at(buf, i) == Some(b'[')) {
+            return None;
+        }
     }
 
     i = i.saturating_add(1);
