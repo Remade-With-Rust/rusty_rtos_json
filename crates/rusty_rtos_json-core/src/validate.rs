@@ -531,6 +531,9 @@ pub(crate) fn skip_space_and_comma(buf: &[u8], start: &mut usize, max: usize) ->
 
 /// `skipArrayScalars`.
 fn skip_array_scalars(buf: &[u8], start: &mut usize, max: usize) -> bool {
+    // Clamped once: past the buffer every read answers `None`, which
+    // is what the loop below breaks on anyway.
+    let max = max.min(buf.len());
     let mut i = *start;
     let mut ret = true;
 
@@ -561,6 +564,9 @@ fn skip_array_scalars(buf: &[u8], start: &mut usize, max: usize) -> bool {
 
 /// `skipObjectScalars`.
 fn skip_object_scalars(buf: &[u8], start: &mut usize, max: usize) -> bool {
+    // Clamped once: past the buffer every read answers `None`, which
+    // is what the loop below breaks on anyway.
+    let max = max.min(buf.len());
     let mut i = *start;
     let mut ret = true;
 
@@ -618,6 +624,9 @@ fn skip_scalars(buf: &[u8], start: &mut usize, max: usize, mode: u8) -> bool {
 
 /// `skipCollection`: the explicit stack that replaces recursion.
 pub(crate) fn skip_collection(buf: &[u8], start: &mut usize, max: usize) -> Validity {
+    // Clamped once: past the buffer every read answers `None`, which
+    // is what the loop below breaks on anyway.
+    let max = max.min(buf.len());
     let mut ret = Validity::Partial;
     let mut stack = [0u8; MAX_DEPTH];
     // `int16_t depth = -1`, as an Option so there is no negative index.
