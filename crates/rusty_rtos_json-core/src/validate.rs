@@ -358,9 +358,17 @@ fn skip_literal(buf: &[u8], start: &mut usize, max: usize, literal: &[u8]) -> bo
 
 /// `skipAnyLiteral`: `true`, `false` or `null`.
 fn skip_any_literal(buf: &[u8], start: &mut usize, max: usize) -> bool {
-    skip_literal(buf, start, max, b"true")
-        || skip_literal(buf, start, max, b"false")
-        || skip_literal(buf, start, max, b"null")
+    // The same dispatch as `skip_any_scalar`, one level down: the three
+    // literals begin with three different bytes, so comparing against all of
+    // them was two slice comparisons that could not match. `skip_literal`
+    // writes `*start` only when the slice equals the literal, so declining to
+    // run the two that cannot match changes nothing but the count.
+    match at(buf, *start) {
+        Some(b't') => skip_literal(buf, start, max, b"true"),
+        Some(b'f') => skip_literal(buf, start, max, b"false"),
+        Some(b'n') => skip_literal(buf, start, max, b"null"),
+        _ => false,
+    }
 }
 
 /// The largest value an array index may reach: `MAX_INDEX_VALUE`, which the
@@ -473,9 +481,28 @@ fn skip_number(buf: &[u8], start: &mut usize, max: usize) -> bool {
 
 /// `skipAnyScalar`.
 pub(crate) fn skip_any_scalar(buf: &[u8], start: &mut usize, max: usize) -> bool {
-    skip_string(buf, start, max)
-        || skip_any_literal(buf, start, max)
-        || skip_number(buf, start, max)
+    // One dispatch on the first byte instead of up to three failed parses.
+    // JSON is unambiguous at the first character, so at most one of these can
+    // succeed: `skip_string` needs `"`, `skip_any_literal` needs `t`, `f` or
+    // `n`, and `skip_number` needs `-` or a digit. The chain this replaces
+    // tried the string, then all three literals, then the number -- so every
+    // number paid for a failed string parse and three slice comparisons
+    // before it began.
+    //
+    // Byte-identical by construction: each of the three writes `*start` only
+    // on success, so a parse that cannot match leaves nothing behind, and not
+    // running it is invisible to everything downstream.
+    //
+    // And no `*start >= max` guard: all three refuse that themselves --
+    // `skip_string` tests `i < max`, `skip_literal` opens with `from >= max`,
+    // `skip_number` guards both branches -- so a guard here is a second test
+    // of something already tested.
+    match at(buf, *start) {
+        Some(b'"') => skip_string(buf, start, max),
+        Some(b't' | b'f' | b'n') => skip_any_literal(buf, start, max),
+        Some(b'-' | b'0'..=b'9') => skip_number(buf, start, max),
+        _ => false,
+    }
 }
 
 /// `skipSpaceAndComma`: true only when a comma is followed by more content.
@@ -502,6 +529,13 @@ fn skip_array_scalars(buf: &[u8], start: &mut usize, max: usize) -> bool {
     let mut ret = true;
 
     while i < max {
+        // An element that opens a collection is not a scalar, so the scalar
+        // attempt could only answer false and leave `i` where it is -- which
+        // is the same state this break leaves. `skipCollection`'s stack is
+        // what handles it, exactly as it does when the parse fails.
+        if at(buf, i).is_some_and(is_open_bracket) {
+            break;
+        }
         if !skip_any_scalar(buf, &mut i, max) {
             break;
         }
@@ -668,7 +702,12 @@ pub fn validate(buf: &[u8]) -> Validity {
     let mut i = 0usize;
     skip_space(buf, &mut i, max);
 
-    let mut ret = if skip_any_scalar(buf, &mut i, max) {
+    // A document that opens a collection cannot be a scalar, so the scalar
+    // attempt is one the dispatch could only answer false to. The compiler
+    // cannot know that; the grammar does.
+    let mut ret = if at(buf, i).is_some_and(is_open_bracket) {
+        skip_collection(buf, &mut i, max)
+    } else if skip_any_scalar(buf, &mut i, max) {
         Validity::Valid
     } else {
         skip_collection(buf, &mut i, max)
