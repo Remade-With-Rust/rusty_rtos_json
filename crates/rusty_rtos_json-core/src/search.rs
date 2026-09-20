@@ -278,24 +278,27 @@ fn key_bytes_present(hay: &[u8], key: &[u8]) -> bool {
         return false;
     };
 
-    let mut p = 1usize;
-    while p <= limit {
-        let Some(rest) = hay.get(p..=limit) else {
-            return false;
-        };
-        let Some(off) = rest.iter().position(|&b| b == first) else {
-            return false;
-        };
-        let at = p.saturating_add(off);
-        if hay.get(at.saturating_sub(1)) == Some(&b'"')
-            && hay.get(at.saturating_add(klen)) == Some(&b'"')
-            && hay.get(at..at.saturating_add(klen)) == Some(key)
-        {
-            return true;
-        }
-        p = at.saturating_add(1);
-    }
-    false
+    // ONE pass, one iterator. The first cut re-sliced `hay` and built a fresh
+    // `position` iterator after every candidate, which put 34.8% of the
+    // remaining total into `slice/iter` and `ptr/non_null` -- iterator setup,
+    // not scanning. A common first byte made that happen often.
+    //
+    // `i` indexes a window starting at 1, so the key would start at `i + 1`
+    // and `i` is itself the byte that has to be the opening quote.
+    let Some(window) = hay.get(1..=limit) else {
+        return false;
+    };
+    window.iter().enumerate().any(|(i, &b)| {
+        // The arithmetic wraps rather than saturates, and cannot: `i` is below
+        // `window.len()`, which is `limit`, and `limit + klen` is `len - 1` by
+        // the `checked_sub` above. Saturating here would cost a conditional
+        // move on every byte of every document to protect a case the bounds
+        // already exclude -- the rule the rest of this file follows.
+        b == first
+            && hay.get(i) == Some(&b'"')
+            && hay.get(i.wrapping_add(1).wrapping_add(klen)) == Some(&b'"')
+            && hay.get(i.wrapping_add(1)..i.wrapping_add(1).wrapping_add(klen)) == Some(key)
+    })
 }
 
 /// `objectSearch`: the value for a key, by walking the pairs in order.
