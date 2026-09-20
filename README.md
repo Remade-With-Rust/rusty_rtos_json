@@ -222,10 +222,55 @@ which is not a panic and cannot be caught.
 
 ## Performance
 
-No speed row and no size row: nothing here has been benchmarked, and nothing
-has run on a chip. The ledger does carry this crate's **counts** — the 318
-files, the 2,124 queries, the 73,005 documents — because a count is a number
-and belongs there with its method, the same as a timing would.
+No speed row and no size row: nothing here has been timed, and nothing has run
+on a chip. What it has is a **deterministic instruction count** under
+callgrind, which is a count rather than a clock and so belongs here on the same
+terms as the corpus counts.
+
+### The query path halved, by proving absence instead of walking for it
+
+```
+search-ir   42,748,360  ->  21,361,060      -50.0%
+```
+
+`object_search` matches a key by comparing **raw** bytes — it never unescapes
+one — and the slice it compares always lies between a pair of quotes. So a
+matching key means the bytes `"key"` appear contiguously in the buffer, and the
+converse is the lever: **if they do not appear, no key can match**, and the
+walk can only answer `Missing`.
+
+That is a *proof*, not a prediction. It cannot change an answer, only reach the
+same one sooner — which is what lets it be on by default in a crate whose whole
+claim is byte-identity with coreJSON. Every work-parity anchor is unmoved, and
+the query differential and the 318-file suite both pass. Poison-proved: make
+the proof claim absence wrongly and
+`our_query_engine_matches_the_c_call_for_call` fails.
+
+### What it costs when the key IS there, which is the honest half
+
+`search-ir` is a 10x20 **cross product**, so 76% of its pairs are provably
+absent — a property of the benchmark, not of any caller. A hit-only workload
+built from the same documents and the 16 pairs that actually hit says:
+
+| workload | vs no gate |
+|---|---:|
+| 76% absent (the instrument) | **−50.0%** |
+| 0% absent (every query hits) | **+13.2%** |
+
+So the break-even is around a **16% absence rate**: above it the proof pays,
+below it the scan is overhead. Probing for optional fields — the common reason
+to query JSON on a device — sits well above that. A caller that only ever asks
+for keys it knows are present would be better off without it, and now has the
+number to decide.
+
+A first-byte prefilter was landed and then **reverted** on exactly this
+evidence: it won 0.9% on the cross product and cost 4.1% on hits, paying only
+above ~62% absence. Two further ideas were sized offline and pruned unbuilt —
+an array-index bound (worth one pair in two hundred) and a rarest-byte anchor
+(47% fewer candidates, but choosing the byte needs the histogram it would save).
+
+The ledger carries this crate's **counts** too — the 318 files, the 2,124
+queries, the 73,005 documents — with their methods.
 
 ## Portability
 
