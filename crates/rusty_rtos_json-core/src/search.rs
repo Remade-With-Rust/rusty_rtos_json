@@ -247,17 +247,55 @@ fn next_key_value_pair(
 /// It is anchored on the opening quote rather than on the key's first byte,
 /// because the quote is what makes the argument above sound; the slice
 /// comparison then rejects almost every candidate on its first byte anyway.
+///
+/// # Anchored on the key's first byte, not on the quote
+///
+/// The first cut walked `hay.windows(need)` and compared each window. It was
+/// correct and it cost 41% of what the gate had just saved: a `windows`
+/// iterator builds a slice per position, and the slice equality fell out to a
+/// `memcmp` CALL at every one of them. In JSON a quote is one of the most
+/// common bytes there is, so anchoring on it rejects almost nothing before
+/// paying for the compare.
+///
+/// A key's first byte is a letter far more often than not, so anchoring there
+/// rejects nearly every position on a single comparison, and the quote either
+/// side is then checked on the two bytes that bracket a hit.
 #[inline]
 fn key_bytes_present(hay: &[u8], key: &[u8]) -> bool {
-    // The window is `"` + key + `"`. `saturating_add` because a range's far
-    // end is what proves it well ordered -- the same rule the walk follows.
-    let need = key.len().saturating_add(2);
-    hay.len() >= need
-        && hay.windows(need).any(|w| {
-            w.first() == Some(&b'"')
-                && w.last() == Some(&b'"')
-                && w.get(1..need.saturating_sub(1)) == Some(key)
-        })
+    // An empty key part cannot reach here -- `skip_query_part` answers `None`
+    // and the caller has already returned `BadQuery` -- but proving nothing is
+    // the safe answer rather than a panic if it ever does.
+    let Some(&first) = key.first() else {
+        return true;
+    };
+    let klen = key.len();
+
+    // The key's own first byte sits one past an opening quote and `klen` bytes
+    // before a closing one, so it can start no earlier than 1 and no later
+    // than `len - klen - 1`. `checked_sub` answering `None` means the buffer
+    // is too short to hold the pattern at all, which is absence.
+    let Some(limit) = hay.len().checked_sub(klen.saturating_add(1)) else {
+        return false;
+    };
+
+    let mut p = 1usize;
+    while p <= limit {
+        let Some(rest) = hay.get(p..=limit) else {
+            return false;
+        };
+        let Some(off) = rest.iter().position(|&b| b == first) else {
+            return false;
+        };
+        let at = p.saturating_add(off);
+        if hay.get(at.saturating_sub(1)) == Some(&b'"')
+            && hay.get(at.saturating_add(klen)) == Some(&b'"')
+            && hay.get(at..at.saturating_add(klen)) == Some(key)
+        {
+            return true;
+        }
+        p = at.saturating_add(1);
+    }
+    false
 }
 
 /// `objectSearch`: the value for a key, by walking the pairs in order.
