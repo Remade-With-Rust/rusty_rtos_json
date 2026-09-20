@@ -231,6 +231,35 @@ fn next_key_value_pair(
     Some((key, key_length, value, value_length))
 }
 
+/// Could the key `key` match ANY pair in `hay`? A cheap proof of absence.
+///
+/// `object_search` matches a key by comparing RAW bytes -- it never unescapes
+/// one -- and the slice it compares is the content between a pair of quotes.
+/// So a matching key means the bytes `"key"`, quotes included, appear
+/// contiguously in the buffer. The converse is what this exploits: **if they
+/// do not appear, no key can match**, and the walk can only answer
+/// `NotFound::Missing`.
+///
+/// That makes this a PROOF, not a prediction. It cannot change an answer, only
+/// reach the same one sooner, which is what lets it be on by default in a
+/// crate whose whole claim is byte-identity with coreJSON.
+///
+/// It is anchored on the opening quote rather than on the key's first byte,
+/// because the quote is what makes the argument above sound; the slice
+/// comparison then rejects almost every candidate on its first byte anyway.
+#[inline]
+fn key_bytes_present(hay: &[u8], key: &[u8]) -> bool {
+    // The window is `"` + key + `"`. `saturating_add` because a range's far
+    // end is what proves it well ordered -- the same rule the walk follows.
+    let need = key.len().saturating_add(2);
+    hay.len() >= need
+        && hay.windows(need).any(|w| {
+            w.first() == Some(&b'"')
+                && w.last() == Some(&b'"')
+                && w.get(1..need.saturating_sub(1)) == Some(key)
+        })
+}
+
 /// `objectSearch`: the value for a key, by walking the pairs in order.
 ///
 /// The first match wins, so a document with duplicate keys answers with the
@@ -390,7 +419,21 @@ fn multi_search(buf: &[u8], query: &[u8]) -> Result<(usize, usize), NotFound> {
                 return Err(NotFound::BadQuery);
             };
 
-            object_search(sub, length, key)
+            // THE SKIP GATE, and its position is load-bearing in two ways.
+            //
+            // It is after both `BadQuery` checks above, because a malformed
+            // query must answer `BadQuery` and not `Missing`; moving it one
+            // line earlier changes the answer for `""` and `a..b`.
+            //
+            // And it is inside the loop rather than once at the top, so it
+            // applies at every depth: each part searches the sub-buffer the
+            // last one found, which is a sub-slice of the whole, so absence
+            // there is proof for that part too.
+            if key_bytes_present(sub, key) {
+                object_search(sub, length, key)
+            } else {
+                None
+            }
         };
 
         let Some((value, value_length)) = found else {
