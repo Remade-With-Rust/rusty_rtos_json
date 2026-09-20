@@ -288,18 +288,6 @@ fn key_bytes_present(hay: &[u8], key: &[u8]) -> bool {
     let Some(window) = hay.get(1..=limit) else {
         return false;
     };
-
-    // A pure byte scan first, because it is the only shape here LLVM will
-    // widen: no index to carry, no bounds check, no short-circuit chain. It
-    // decides 59% of the calls in this workload on its own -- if the key's
-    // first byte is nowhere in the window, no key can start there.
-    //
-    // The precise scan below repeats this comparison, so the 41% that get
-    // past pay for one extra pass. That is the trade, and it measured a win.
-    if !window.contains(&first) {
-        return false;
-    }
-
     window.iter().enumerate().any(|(i, &b)| {
         // The arithmetic wraps rather than saturates, and cannot: `i` is below
         // `window.len()`, which is `limit`, and `limit + klen` is `len - 1` by
