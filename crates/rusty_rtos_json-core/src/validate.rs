@@ -206,16 +206,61 @@ fn skip_utf8(buf: &[u8], start: &mut usize, max: usize) -> bool {
 /// `NOT_A_HEX_CHAR`.
 const NOT_A_HEX_CHAR: u8 = 0x10;
 
-/// `hexToInt`.
-const fn hex_to_int(c: u8) -> u8 {
-    // Each arm's own range is what makes its arithmetic total: the
-    // subtraction cannot go below zero and the sum cannot pass 15. The
-    // saturating forms say so to the compiler as well as to the reader.
+/// The rule `hexToInt` encodes, kept as the table's GENERATOR and its oracle.
+///
+/// Each arm's own range is what makes its arithmetic total: the subtraction
+/// cannot go below zero and the sum cannot pass 15. The saturating forms say
+/// so to the compiler as well as to the reader.
+const fn hex_value(c: u8) -> u8 {
     match c {
         b'a'..=b'f' => c.saturating_sub(b'a').saturating_add(10),
         b'A'..=b'F' => c.saturating_sub(b'A').saturating_add(10),
         b'0'..=b'9' => c.saturating_sub(b'0'),
         _ => NOT_A_HEX_CHAR,
+    }
+}
+
+/// Every byte's hex value, or [`NOT_A_HEX_CHAR`].
+///
+/// **Generated from [`hex_value`]**, so the table and the rule it encodes
+/// cannot drift apart -- a hand-typed table is the classic way to ship a
+/// parser that accepts one byte it should not.
+const fn build_hex() -> [u8; 256] {
+    let mut table = [NOT_A_HEX_CHAR; 256];
+    let mut c = 0usize;
+    while c < 256 {
+        // Indexing a fixed 256-entry array by a counter the loop condition
+        // has just proven below 256. `get_mut` is not const here, and a
+        // const initialiser cannot panic at run time in any case.
+        #[allow(clippy::indexing_slicing)]
+        {
+            table[c] = hex_value(c as u8);
+        }
+        c = c.saturating_add(1);
+    }
+    table
+}
+
+/// See [`build_hex`].
+static HEX: [u8; 256] = build_hex();
+
+/// `hexToInt`, as one load.
+///
+/// The three range arms this replaces cost a comparison pair each, and a
+/// `\uXXXX` pays them four times -- eight across a surrogate pair. `json-ir`
+/// put **7.6%** of its whole total in `skip_hex_escape`.
+///
+/// That share is why fifteen earlier wins in this file went straight past it:
+/// they were all measured on `search-ir`, whose documents carry no hex escape
+/// at all, so the function was never once hot in the instrument being read.
+#[inline]
+fn hex_to_int(c: u8) -> u8 {
+    match HEX.get(c as usize) {
+        Some(value) => *value,
+        // `u8 as usize` is below 256 and the table is 256 long, so this arm
+        // is unreachable. Answering "not a hex char" rather than panicking is
+        // what keeps this crate's no-panic property a property.
+        None => NOT_A_HEX_CHAR,
     }
 }
 
@@ -819,4 +864,64 @@ pub fn validate(buf: &[u8]) -> Validity {
 #[must_use]
 pub fn is_valid(buf: &[u8]) -> bool {
     validate(buf) == Validity::Valid
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The table IS the rule, for every byte there is.
+    ///
+    /// [`HEX`] is generated from [`hex_value`] in a `const` block, so this
+    /// cannot fail while that stays true -- which is the point. It fails the
+    /// moment somebody replaces the generator with a hand-typed table, and a
+    /// hand-typed table accepting one byte it should not is the classic way
+    /// to ship a parser that disagrees with its reference.
+    #[test]
+    fn the_hex_table_is_the_rule_for_every_one_of_the_256_bytes() {
+        for c in 0..=u8::MAX {
+            assert_eq!(
+                hex_to_int(c),
+                hex_value(c),
+                "the table and the rule disagree about {c:#04x}"
+            );
+        }
+    }
+
+    /// Exactly 22 bytes are hex digits, and nothing else is.
+    ///
+    /// Stated as a count as well as a rule, because a count is the cheapest
+    /// thing to get wrong by one.
+    #[test]
+    fn exactly_twenty_two_bytes_are_hex_digits() {
+        let hex = (0..=u8::MAX).filter(|c| hex_to_int(*c) != NOT_A_HEX_CHAR);
+        assert_eq!(hex.count(), 22, "10 digits plus a-f plus A-F");
+    }
+
+    /// **A gate gap this closes.** A non-hex byte inside a `\u` escape must be
+    /// refused.
+    ///
+    /// JSONTestSuite has no file that distinguishes this: deliberately
+    /// poisoning `hex_value` to accept `g` left all 318 files agreeing with
+    /// coreJSON and every other test in the crate passing. The corpus is a
+    /// conformance corpus, not a proof that every byte class is separated.
+    #[test]
+    fn a_non_hex_byte_in_an_escape_is_refused() {
+        // Every position in the four digits, so none of them is unchecked.
+        for bad in [
+            br#"{"a":"\ug000"}"#.as_slice(),
+            br#"{"a":"\u0g00"}"#.as_slice(),
+            br#"{"a":"\u00g0"}"#.as_slice(),
+            br#"{"a":"\u000g"}"#.as_slice(),
+        ] {
+            assert!(
+                !is_valid(bad),
+                "a non-hex digit was accepted: {}",
+                core::str::from_utf8(bad).unwrap_or("<not utf8>")
+            );
+        }
+        // And the same shape WITH four real digits is accepted, so the test
+        // above is rejecting the digit and not the surrounding document.
+        assert!(is_valid(br#"{"a":"\u0041"}"#.as_slice()));
+    }
 }
