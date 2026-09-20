@@ -279,15 +279,29 @@ fn skip_one_hex_escape(buf: &[u8], start: &mut usize, max: usize, out: &mut u16)
         && at(buf, i) == Some(b'\\')
         && at(buf, i.saturating_add(1)) == Some(b'u')
     {
+        // Four digits, unrolled, and validated with ONE test.
+        //
+        // `NOT_A_HEX_CHAR` is `0x10` and every real value is `0x0..=0xF`, so
+        // bit four is set exactly when a digit is not hex. OR the four
+        // together and that one bit answers for all of them -- where the
+        // byte-at-a-time loop carried a bound, a branch per digit and an
+        // `Option` per digit.
+        //
+        // A byte past the end reads as `0`, which is NUL, which is not a hex
+        // digit -- so an out-of-range escape fails through the same test
+        // rather than needing its own. `end < max` above means it cannot
+        // happen anyway.
         i = i.saturating_add(2);
-        while i < end {
-            let Some(c) = at(buf, i) else { break };
-            let n = hex_to_int(c);
-            if n == NOT_A_HEX_CHAR {
-                break;
-            }
-            value = (value << 4) | u16::from(n);
-            i = i.saturating_add(1);
+        let n0 = hex_to_int(at(buf, i).unwrap_or(0));
+        let n1 = hex_to_int(at(buf, i.wrapping_add(1)).unwrap_or(0));
+        let n2 = hex_to_int(at(buf, i.wrapping_add(2)).unwrap_or(0));
+        let n3 = hex_to_int(at(buf, i.wrapping_add(3)).unwrap_or(0));
+        if (n0 | n1 | n2 | n3) & NOT_A_HEX_CHAR == 0 {
+            value = (u16::from(n0) << 12)
+                | (u16::from(n1) << 8)
+                | (u16::from(n2) << 4)
+                | u16::from(n3);
+            i = end;
         }
     }
 
