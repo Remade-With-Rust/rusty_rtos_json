@@ -9,7 +9,7 @@
 **Architect**: [Tim Almond](https://github.com/Ttimmahlax) — accountable for this unit's security design; rendered
 at the foot of the block in every README and mirror
 **Audit depth**: survey
-**Audited**: 2026-09-09 by kairos (scaffold pass) · **Next review**: the first milestone with a kill test
+**Audited**: 2026-09-21 by kairos (threat model pass) · **Next review**: the fuzzing gates H-26 and H-27, which are the two ★ rows left
 
 > Source of truth for this unit's hardening status. The README's status table is
 > **generated from this file** — edit here, then run:
@@ -40,7 +40,7 @@ Evidence; excluded from the totals).
 
 | ID | Gate | Status | Evidence | Target |
 |---|---|---|---|---|
-| H-01 | ★ Threat model documented and linked from README | Incomplete | the sketch above; `docs/threat-model.md` is the first milestone's deliverable | |
+| H-01 | ★ Threat model documented and linked from README | Completed | `docs/threat-model.md` (model v1, 2026-09-21), written for THIS unit: one adversary (whoever controls the bytes), three attack paths, each with the evidence against it. The previous version of this row described a kernel | |
 | H-02 | Threat model revisited after last major change | Incomplete | no major change yet | |
 
 ### Phase 1 — Toolchain
@@ -74,7 +74,7 @@ Evidence; excluded from the totals).
 | H-17 | Arithmetic safety explicit | Incomplete | `arithmetic_side_effects = warn` under `-D warnings`; no arithmetic yet to audit | |
 | H-18 | ★ No `unwrap`/`expect`/panic on untrusted paths; typed errors | Completed | `unwrap_used`, `expect_used`, `panic` = deny at the workspace; tests opt out per file | |
 | H-19 | Input validation — external bytes treated as hostile | Incomplete | no parser yet; the no-panic gate arrives with the first one | |
-| H-20 | ★ Secrets zeroized; never logged | Incomplete | no secret enters this crate by design; state it in the threat model | |
+| H-20 | ★ Secrets zeroized; never logged | Completed | `docs/threat-model.md` §4. No secret enters this unit, and the obligation where a DOCUMENT carries one is stated precisely: no value is copied out of the caller's buffer (slices are handed back, so there is no second copy to zeroize) and content is never logged, formatted or traced | |
 | H-21 | Concurrency discipline | Incomplete | no shared mutable state yet | |
 
 ### Phase 4 — Static analysis
@@ -95,7 +95,7 @@ Evidence; excluded from the totals).
 
 | ID | Gate | Status | Evidence | Target |
 |---|---|---|---|---|
-| H-26 | ★ Fuzz target per public parser, decoder, or message handler | Incomplete | no parser yet | |
+| H-26 | ★ Fuzz target per public parser, decoder, or message handler | Incomplete | **the previous text here said "no parser yet", in a JSON parser -- the row was the kernel's, unedited.** What exists: `tests/no_panic.rs`, ten property tests driving every public entry with arbitrary bytes, JSON-shaped noise, EVERY truncation of a valid document, EVERY single-byte corruption, over-deep nesting, and the same four again through the query path. That is a bounded property suite, not a `cargo fuzz` target, so this stays Incomplete -- see the threat model's R-2 | |
 | H-27 | ★ Continuous fuzzing with no open crashes | Incomplete | | |
 | H-28 | Property tests cover the documented invariants | Incomplete | | |
 | H-29 | Mutation and/or differential testing on critical modules | Incomplete | the C oracle differential arrives with K1 | |
@@ -135,7 +135,7 @@ Evidence; excluded from the totals).
 | H-38 | Releases signed, attested, and changelogged for security | Incomplete | no release yet | |
 | H-39 | ★ `SECURITY.md` with a coordinated disclosure process | Completed | `SECURITY.md`: contact, 5-day acknowledgement, 14-day updates, 90-day disclosure | |
 | H-40 | Advisory monitoring and scheduled re-audit | Incomplete | | |
-| H-41 | ★ Residual risks listed and accepted; waivers time-bounded | Incomplete | the register below is empty until the first milestone | |
+| H-41 | ★ Residual risks listed and accepted; waivers time-bounded | Completed | `docs/threat-model.md` §6: five residual risks, each with the condition that closes it. R-1 and R-2 are the fuzzing gates, stated as what the property suite does and does not substitute for | |
 
 ### Phase 12 — Compliance controls
 
